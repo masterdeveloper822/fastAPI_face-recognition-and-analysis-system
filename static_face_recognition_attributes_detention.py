@@ -63,7 +63,7 @@ class FaceRecognitionAndAnalysis:
         face_locations = face_recognition.face_locations(unknown_image)
         face_encodings = face_recognition.face_encodings(unknown_image, face_locations)
         
-        results = []
+        result = {}
         
         for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
             matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding)
@@ -78,13 +78,9 @@ class FaceRecognitionAndAnalysis:
             if not attributes:
                 attributes = self._analyze_unknown_face(unknown_image, top, bottom, left, right)
             
-            results.append({
-                'name': name,
-                'location': (top, right, bottom, left),
-                'attributes': attributes
-            })
+            result = attributes['age']
         
-        return results
+        return result
 
     def _analyze_unknown_face(self, unknown_image, top, bottom, left, right):
         try:
