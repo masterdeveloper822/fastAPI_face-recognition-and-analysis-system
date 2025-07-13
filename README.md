@@ -4,7 +4,7 @@ This project now provides a web backend (API) for static image face recognition 
 
 ## Features
 - **Face Detection & Recognition**: Detects and recognizes faces in static images.
-- **Facial Attribute Detection**: Extracts age, gender, emotion, and race using DeepFace.
+- **Facial Attribute Detection**: Extracts age, gender, emotion, race, and eye redness using DeepFace and OpenCV.
 - **REST API**: Interact with the system via HTTP endpoints.
 
 ## How to Run the Web Backend
@@ -40,12 +40,13 @@ POST `/recognize/`
   ```bash
   curl -X POST -F "image=@/path/to/image.jpg" http://127.0.0.1:8000/recognize/
   ```
-- **Response:** JSON with recognized faces, locations, and attributes.
+- **Response:** JSON with recognized faces, locations, and attributes (including 'eye_redness' score).
 
 ## Notes
 - **No video detection:** This backend only supports static image analysis.
 - **Old CLI and video modes are deprecated.**
 - Ensure you have the `shape_predictor_68_face_landmarks.dat` file in the project directory.
+- The 'eye_redness' attribute is a simple redness score for each detected face's eyes (higher means more red).
 
 ## License
 See LICENSE for details.

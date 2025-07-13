@@ -5,27 +5,23 @@ from static_face_recognition_attributes_detention import FaceRecognitionAndAnaly
 import shutil
 import os
 import uuid
+import traceback
 
 app = FastAPI()
 
+# Global instance (for demo; in production, use a better state management)
+face_recognition_analysis = FaceRecognitionAndAnalysis()
 
-#Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Global instance (for demo; in production, use a better state management)
-face_recognition_analysis = FaceRecognitionAndAnalysis()
-
 @app.post("/load-known-faces/")
 def load_known_faces(directory_or_image_path: str = Form(...)):
-    """
-    Load known faces from a directory or a single image path.
-    """
     if not os.path.exists(directory_or_image_path):
         raise HTTPException(status_code=400, detail="Path does not exist.")
     face_recognition_analysis.load_known_faces(directory_or_image_path)
@@ -33,20 +29,18 @@ def load_known_faces(directory_or_image_path: str = Form(...)):
 
 @app.post("/recognize/")
 def recognize_and_analyze(image: UploadFile = File(...)):
-    """
-    Recognize and analyze faces in an uploaded image.
-    """
-    # Save uploaded file to a temp location
     temp_filename = f"temp_{uuid.uuid4().hex}_{image.filename}"
     with open(temp_filename, "wb") as buffer:
         shutil.copyfileobj(image.file, buffer)
     try:
-        result = face_recognition_analysis.recognize_and_analyze(temp_filename)
+        results = face_recognition_analysis.recognize_and_analyze(temp_filename)
     except Exception as e:
         os.remove(temp_filename)
-        raise HTTPException(status_code=500, detail=str(e))
+        tb = traceback.format_exc()
+        print("Exception in /recognize/:\n", tb)
+        raise HTTPException(status_code=500, detail=tb)
     os.remove(temp_filename)
-    return JSONResponse(content={"biologicalAge": result})
+    return JSONResponse(content={"results": results})
 
 @app.get("/")
 def root():
