@@ -14,6 +14,8 @@ This project now provides a web backend (API) for static image face recognition 
    pip install -r requirements.txt
    ```
 
+   python version: 
+
 2. **Prepare known faces**:
    Place images of known individuals into the `./images/individuals` directory. The system will encode and store their facial data for recognition.
 
