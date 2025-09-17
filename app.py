@@ -1,11 +1,21 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from static_face_recognition_attributes_detention import FaceRecognitionAndAnalysis
 import shutil
 import os
 import uuid
 
 app = FastAPI()
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # Add your frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Global instance (for demo; in production, use a better state management)
 face_recognition_analysis = FaceRecognitionAndAnalysis()
@@ -35,7 +45,13 @@ def recognize_and_analyze(image: UploadFile = File(...)):
         os.remove(temp_filename)
         raise HTTPException(status_code=500, detail=str(e))
     os.remove(temp_filename)
-    return JSONResponse(content={"results": results})
+    
+    # Safely extract age if available
+    if results and len(results) > 0 and 'attributes' in results[0] and 'age' in results[0]['attributes']:
+        age = results[0]['attributes']['age']
+        return JSONResponse(content={"results": age})
+    else:
+        return JSONResponse(content={"results": results, "message": "No age data available"})
 
 @app.get("/")
 def root():
