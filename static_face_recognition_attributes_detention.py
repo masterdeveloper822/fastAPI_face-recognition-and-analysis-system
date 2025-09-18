@@ -78,6 +78,8 @@ class FaceRecognitionAndAnalysis:
                 droopy_eyelids = self.analyze_droopy_eyelids(face_image)
                 forehead_wrinkles = self.analyze_forehead_wrinkles(face_image)
                 acne_lesions = self.analyze_acne_lesions(face_image)
+                rosacea = self.analyze_rosacea(face_image)
+                xanthelasma = self.analyze_xanthelasma(face_image)
                 
                 face_attributes = convert_to_json_serializable({
                     'age': attributes['age'],
@@ -88,7 +90,9 @@ class FaceRecognitionAndAnalysis:
                     'under_eye_bags': under_eye_bags,
                     'droopy_eyelids': droopy_eyelids,
                     'forehead_wrinkles': forehead_wrinkles,
-                    'acne_lesions': acne_lesions
+                    'acne_lesions': acne_lesions,
+                    'rosacea': rosacea,
+                    'xanthelasma': xanthelasma
                 })
             else:
                 # Fallback if face location detection fails
@@ -101,7 +105,9 @@ class FaceRecognitionAndAnalysis:
                     'under_eye_bags': None,
                     'droopy_eyelids': None,
                     'forehead_wrinkles': None,
-                    'acne_lesions': None
+                    'acne_lesions': None,
+                    'rosacea': None,
+                    'xanthelasma': None
                 })
             self.known_face_attributes.append(face_attributes)
             
@@ -414,6 +420,7 @@ class FaceRecognitionAndAnalysis:
             # Convert to different color spaces for better analysis
             hsv = cv2.cvtColor(face_image, cv2.COLOR_BGR2HSV)
             lab = cv2.cvtColor(face_image, cv2.COLOR_BGR2LAB)
+            hsv = cv2.cvtColor(face_image, cv2.COLOR_BGR2HSV)
             
             # Define skin regions to analyze (avoiding eyes, mouth)
             shape = predictor(gray, rects[0])
@@ -597,6 +604,330 @@ class FaceRecognitionAndAnalysis:
                 "possible_health_conditions": [f"error: {str(e)}"]
             }
 
+    def analyze_rosacea(self, face_image, predictor_path='shape_predictor_68_face_landmarks.dat'):
+        """
+        Detect facial redness and visible blood vessels suggestive of rosacea.
+        Measures global facial redness, regional redness (cheeks/nose), and vessel-like structures.
+        """
+        import os
+        try:
+            if not os.path.exists(predictor_path):
+                print(f"Predictor file not found: {predictor_path}")
+                return {
+                    "global_redness": 0.0,
+                    "cheek_redness_left": 0.0,
+                    "cheek_redness_right": 0.0,
+                    "nose_redness": 0.0,
+                    "vessel_score": 0.0,
+                    "rosacea_detected": False,
+                    "possible_health_conditions": ["predictor file not found"]
+                }
+
+            # Convert
+            gray = cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY)
+            hsv = cv2.cvtColor(face_image, cv2.COLOR_BGR2HSV)
+            lab = cv2.cvtColor(face_image, cv2.COLOR_BGR2LAB)
+
+            detector = dlib.get_frontal_face_detector()
+            predictor = dlib.shape_predictor(predictor_path)
+            rects = detector(gray, 1)
+            if not rects:
+                print("No face detected in rosacea analysis.")
+                return {
+                    "global_redness": 0.0,
+                    "cheek_redness_left": 0.0,
+                    "cheek_redness_right": 0.0,
+                    "nose_redness": 0.0,
+                    "vessel_score": 0.0,
+                    "rosacea_detected": False,
+                    "possible_health_conditions": ["no face detected"]
+                }
+
+            shape = predictor(gray, rects[0])
+
+            # Build face mask similar to acne scope
+            face_left = max(0, shape.part(0).x)
+            face_right = min(gray.shape[1], shape.part(16).x)
+            brow_y = min(shape.part(19).y, shape.part(24).y)
+            chin_y = shape.part(8).y
+            face_width = face_right - face_left
+            face_top = max(0, brow_y - int(0.4 * face_width))
+            face_bottom = min(gray.shape[0], chin_y + int(0.05 * face_width))
+
+            mask = np.zeros(gray.shape, dtype=np.uint8)
+            cv2.rectangle(mask, (face_left, face_top), (face_right, face_bottom), 255, -1)
+
+            # Exclude eyes and mouth to avoid noise
+            left_eye_center = ((shape.part(36).x + shape.part(39).x) // 2, (shape.part(36).y + shape.part(39).y) // 2)
+            right_eye_center = ((shape.part(42).x + shape.part(45).x) // 2, (shape.part(42).y + shape.part(45).y) // 2)
+            eye_radius_x = max(20, int(0.08 * face_width))
+            eye_radius_y = max(12, int(0.05 * face_width))
+            cv2.ellipse(mask, left_eye_center, (eye_radius_x, eye_radius_y), 0, 0, 360, 0, -1)
+            cv2.ellipse(mask, right_eye_center, (eye_radius_x, eye_radius_y), 0, 0, 360, 0, -1)
+            mouth_center = ((shape.part(48).x + shape.part(54).x) // 2, (shape.part(48).y + shape.part(54).y) // 2)
+            mouth_radius_x = max(22, int(0.12 * face_width))
+            mouth_radius_y = max(12, int(0.06 * face_width))
+            cv2.ellipse(mask, mouth_center, (mouth_radius_x, mouth_radius_y), 0, 0, 360, 0, -1)
+
+            # Redness measurement (robust): combine HSV red mask with RGB redness index
+            # HSV red bands
+            lower_red1 = np.array([0, 20, 20])
+            upper_red1 = np.array([15, 255, 255])
+            lower_red2 = np.array([165, 20, 20])
+            upper_red2 = np.array([180, 255, 255])
+            red_mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+            red_mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+            red_mask_hsv = cv2.bitwise_or(red_mask1, red_mask2)
+            red_mask_hsv = cv2.bitwise_and(red_mask_hsv, mask)
+
+            # RGB-based redness index: R - (G+B)/2
+            r = face_image[:, :, 2].astype(np.float32)
+            g = face_image[:, :, 1].astype(np.float32)
+            b = face_image[:, :, 0].astype(np.float32)
+            redness_index = r - (g + b) / 2.0
+            redness_index = np.clip(redness_index, 0, None)
+            # Use percentile threshold within face mask to adapt to lighting
+            masked_vals = redness_index[mask > 0]
+            thr_val = np.percentile(masked_vals, 70) if masked_vals.size > 0 else 0
+            red_mask_ri = ((redness_index >= thr_val).astype(np.uint8) * 255)
+            red_mask_ri = cv2.bitwise_and(red_mask_ri, mask)
+
+            # Combined redness mask
+            red_mask = cv2.bitwise_or(red_mask_hsv, red_mask_ri)
+
+            # Global redness: ratio of red pixels in mask
+            mask_area = np.sum(mask > 0)
+            global_redness = float(np.sum(red_mask > 0) / mask_area) if mask_area > 0 else 0.0
+
+            # Regional redness: cheeks and nose
+            left_cheek = (shape.part(3).x, shape.part(3).y)
+            right_cheek = (shape.part(13).x, shape.part(13).y)
+            nose_tip = (shape.part(30).x, shape.part(30).y)
+            cheek_r = max(25, int(0.12 * face_width))
+            nose_r_x = max(14, int(0.08 * face_width))
+            nose_r_y = max(10, int(0.06 * face_width))
+
+            regional_mask = np.zeros_like(mask)
+            cv2.circle(regional_mask, left_cheek, cheek_r, 255, -1)
+            cv2.circle(regional_mask, right_cheek, cheek_r, 255, -1)
+            cv2.ellipse(regional_mask, nose_tip, (nose_r_x, nose_r_y), 0, 0, 360, 255, -1)
+            regional_mask = cv2.bitwise_and(regional_mask, mask)
+
+            cheek_left_mask = np.zeros_like(mask)
+            cv2.circle(cheek_left_mask, left_cheek, cheek_r, 255, -1)
+            cheek_left_mask = cv2.bitwise_and(cheek_left_mask, mask)
+            cheek_right_mask = np.zeros_like(mask)
+            cv2.circle(cheek_right_mask, right_cheek, cheek_r, 255, -1)
+            cheek_right_mask = cv2.bitwise_and(cheek_right_mask, mask)
+            nose_mask = np.zeros_like(mask)
+            cv2.ellipse(nose_mask, nose_tip, (nose_r_x, nose_r_y), 0, 0, 360, 255, -1)
+            nose_mask = cv2.bitwise_and(nose_mask, mask)
+
+            cheek_red_left = float(np.sum(cv2.bitwise_and(red_mask, cheek_left_mask) > 0) / max(1, np.sum(cheek_left_mask > 0)))
+            cheek_red_right = float(np.sum(cv2.bitwise_and(red_mask, cheek_right_mask) > 0) / max(1, np.sum(cheek_right_mask > 0)))
+            nose_red = float(np.sum(cv2.bitwise_and(red_mask, nose_mask) > 0) / max(1, np.sum(nose_mask > 0)))
+
+            # Vessel-like structure detection: Frangi-like approach with morphological top-hat on LAB 'a' channel
+            a_channel = lab[:, :, 1]
+            tophat_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 9))
+            tophat = cv2.morphologyEx(a_channel, cv2.MORPH_TOPHAT, tophat_kernel)
+            # Emphasize thin lines with Laplacian
+            lap = cv2.Laplacian(tophat, cv2.CV_64F)
+            vessel_resp = np.abs(lap)
+            vessel_resp = (vessel_resp / (vessel_resp.max() + 1e-6)).astype(np.float32)
+            vessel_resp_masked = vessel_resp * (mask.astype(np.float32) / 255.0)
+            vessel_score = float(np.mean(vessel_resp_masked))
+
+            # Heuristics for rosacea detection
+            redness_threshold_global = 0.05
+            redness_threshold_cheek = 0.08
+            redness_threshold_nose = 0.07
+            vessel_threshold = 0.06
+
+            rosacea_detected = (
+                global_redness > redness_threshold_global or
+                cheek_red_left > redness_threshold_cheek or
+                cheek_red_right > redness_threshold_cheek or
+                nose_red > redness_threshold_nose
+            ) and (vessel_score > vessel_threshold)
+
+            possible_conditions = []
+            if rosacea_detected:
+                possible_conditions = ["Rosacea"]
+
+            # Debug
+            print("Rosacea Analysis Debug:")
+            print(f"  - Global redness: {global_redness:.4f}")
+            print(f"  - Cheek L redness: {cheek_red_left:.4f}")
+            print(f"  - Cheek R redness: {cheek_red_right:.4f}")
+            print(f"  - Nose redness: {nose_red:.4f}")
+            print(f"  - Vessel score: {vessel_score:.4f}")
+            print(f"  - Rosacea detected: {rosacea_detected}")
+
+            return {
+                "global_redness": float(global_redness),
+                "cheek_redness_left": float(cheek_red_left),
+                "cheek_redness_right": float(cheek_red_right),
+                "nose_redness": float(nose_red),
+                "vessel_score": float(vessel_score),
+                "rosacea_detected": bool(rosacea_detected),
+                "possible_health_conditions": possible_conditions
+            }
+
+        except Exception as e:
+            print(f"Error in rosacea analysis: {str(e)}")
+            return {
+                "global_redness": 0.0,
+                "cheek_redness_left": 0.0,
+                "cheek_redness_right": 0.0,
+                "nose_redness": 0.0,
+                "vessel_score": 0.0,
+                "rosacea_detected": False,
+                "possible_health_conditions": [f"error: {str(e)}"]
+            }
+
+    def analyze_xanthelasma(self, face_image, predictor_path='shape_predictor_68_face_landmarks.dat'):
+        """
+        Detect xanthelasma: yellowish plaques around eyelids using LAB color space and periocular masks.
+        Returns lesion count, coverage, detection flag, and possible health condition.
+        """
+        import os
+        try:
+            if not os.path.exists(predictor_path):
+                print(f"Predictor file not found: {predictor_path}")
+                return {
+                    "left_periocular_yellow_coverage": 0.0,
+                    "right_periocular_yellow_coverage": 0.0,
+                    "xanthelasma_lesion_count": 0,
+                    "xanthelasma_detected": False,
+                    "possible_health_conditions": ["predictor file not found"]
+                }
+
+            gray = cv2.cvtColor(face_image, cv2.COLOR_BGR2GRAY)
+            lab = cv2.cvtColor(face_image, cv2.COLOR_BGR2LAB)
+            hsv = cv2.cvtColor(face_image, cv2.COLOR_BGR2HSV)
+            detector = dlib.get_frontal_face_detector()
+            predictor = dlib.shape_predictor(predictor_path)
+            rects = detector(gray, 1)
+            if not rects:
+                print("No face detected in xanthelasma analysis.")
+                return {
+                    "left_periocular_yellow_coverage": 0.0,
+                    "right_periocular_yellow_coverage": 0.0,
+                    "xanthelasma_lesion_count": 0,
+                    "xanthelasma_detected": False,
+                    "possible_health_conditions": ["no face detected"]
+                }
+
+            shape = predictor(gray, rects[0])
+
+            # Build periocular masks around both eyes (upper/lower eyelids and inner canthus)
+            def build_periocular_mask(shape, is_left: bool, img_shape):
+                if is_left:
+                    eye_indices = list(range(36, 42))
+                else:
+                    eye_indices = list(range(42, 48))
+                pts = np.array([(shape.part(i).x, shape.part(i).y) for i in eye_indices], dtype=np.int32)
+                x, y, w, h = cv2.boundingRect(pts)
+                # Expand bounding box to include surrounding eyelid area
+                img_h, img_w = img_shape[0], img_shape[1]
+                pad_x = int(max(w * 0.7, 0.06 * img_w))
+                # More coverage downward to capture lower eyelid/cheek plaques
+                up_pad = int(max(h * 0.6, 0.03 * img_h))
+                down_pad = int(max(h * 1.8, 0.08 * img_h))
+                left = max(0, x - pad_x)
+                right = min(img_w, x + w + pad_x)
+                top = max(0, y - up_pad)
+                bottom = min(img_h, y + h + down_pad)
+                mask = np.zeros(img_shape[:2], dtype=np.uint8)
+                cv2.rectangle(mask, (left, top), (right, bottom), 255, -1)
+                return mask
+
+            h_img, w_img = gray.shape
+            left_mask = build_periocular_mask(shape, True, face_image.shape)
+            right_mask = build_periocular_mask(shape, False, face_image.shape)
+
+            # Yellow detection in LAB: high b channel (yellow), moderate-to-high L (avoid shadows)
+            L = lab[:, :, 0]
+            B = lab[:, :, 2]
+            # Adaptive thresholds based on face statistics to be robust to lighting
+            L_mean = float(np.mean(L))
+            B_mean = float(np.mean(B))
+            B_std = float(np.std(B)) + 1e-6
+            # Thresholds: yellow if B is significantly above mean and L not too dark
+            B_thr = max(135.0, B_mean + 0.8 * B_std)
+            L_thr = max(120.0, L_mean - 10.0)
+
+            yellow_lab = ((B.astype(np.float32) >= B_thr) & (L.astype(np.float32) >= L_thr)).astype(np.uint8) * 255
+
+            # Complement with HSV-based yellow detection (handles saturated cosmetic patches)
+            lower_yellow = np.array([18, 80, 80])
+            upper_yellow = np.array([35, 255, 255])
+            yellow_hsv = cv2.inRange(hsv, lower_yellow, upper_yellow)
+
+            yellow_map = cv2.bitwise_or(yellow_lab, yellow_hsv)
+            # Clean small noise
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            yellow_map = cv2.morphologyEx(yellow_map, cv2.MORPH_OPEN, kernel)
+
+            # Focus maps on periocular regions
+            left_yellow = cv2.bitwise_and(yellow_map, left_mask)
+            right_yellow = cv2.bitwise_and(yellow_map, right_mask)
+
+            # Coverage ratios
+            left_area = max(1, int(np.sum(left_mask > 0)))
+            right_area = max(1, int(np.sum(right_mask > 0)))
+            left_cov = float(np.sum(left_yellow > 0) / left_area)
+            right_cov = float(np.sum(right_yellow > 0) / right_area)
+
+            # Count distinct plaques with contour analysis
+            contours_l, _ = cv2.findContours(left_yellow, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            contours_r, _ = cv2.findContours(right_yellow, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            def is_plaque(cnt):
+                area = cv2.contourArea(cnt)
+                if area < 20 or area > 3000:
+                    return False
+                perim = cv2.arcLength(cnt, True)
+                if perim == 0:
+                    return False
+                circularity = 4.0 * np.pi * area / (perim * perim)
+                # Plaques often elongated/oval; allow low circularity but not too jagged
+                return circularity > 0.05
+            plaque_count = sum(1 for c in contours_l if is_plaque(c)) + sum(1 for c in contours_r if is_plaque(c))
+
+            # Decision heuristic
+            cov_threshold_each = 0.005  # 0.5% of periocular area
+            cov_threshold_any = 0.015   # 1.5% either side
+            count_threshold = 1
+            xanthelasma_detected = bool(((left_cov > cov_threshold_each) or (right_cov > cov_threshold_each) or ((left_cov + right_cov) > cov_threshold_any)) and (plaque_count >= count_threshold))
+
+            possible_conditions = ["High Cholesterol(LDL)"] if xanthelasma_detected else []
+
+            # Debug
+            print("Xanthelasma Analysis Debug:")
+            print(f"  - Left coverage: {left_cov:.4f}, Right coverage: {right_cov:.4f}")
+            print(f"  - Plaque count: {plaque_count}")
+            print(f"  - Thresholds -> B_thr: {B_thr:.1f}, L_thr: {L_thr:.1f}")
+            print(f"  - Detected: {xanthelasma_detected}")
+
+            return {
+                "left_periocular_yellow_coverage": float(left_cov),
+                "right_periocular_yellow_coverage": float(right_cov),
+                "xanthelasma_lesion_count": int(plaque_count),
+                "xanthelasma_detected": bool(xanthelasma_detected),
+                "possible_health_conditions": possible_conditions
+            }
+
+        except Exception as e:
+            print(f"Error in xanthelasma analysis: {str(e)}")
+            return {
+                "left_periocular_yellow_coverage": 0.0,
+                "right_periocular_yellow_coverage": 0.0,
+                "xanthelasma_lesion_count": 0,
+                "xanthelasma_detected": False,
+                "possible_health_conditions": [f"error: {str(e)}"]
+            }
+
     def analyze_under_eye_bags(self, face_image, predictor_path='shape_predictor_68_face_landmarks.dat'):
         import os
         try:
@@ -689,6 +1020,8 @@ class FaceRecognitionAndAnalysis:
             droopy_eyelids = self.analyze_droopy_eyelids(face_image)
             forehead_wrinkles = self.analyze_forehead_wrinkles(face_image)
             acne_lesions = self.analyze_acne_lesions(face_image)
+            rosacea = self.analyze_rosacea(face_image)
+            xanthelasma = self.analyze_xanthelasma(face_image)
             attributes = convert_to_json_serializable({
                 'age': attributes['age'],
                 'gender': attributes['gender'],
@@ -698,7 +1031,9 @@ class FaceRecognitionAndAnalysis:
                 'under_eye_bags': under_eye_bags,
                 'droopy_eyelids': droopy_eyelids,
                 'forehead_wrinkles': forehead_wrinkles,
-                'acne_lesions': acne_lesions
+                'acne_lesions': acne_lesions,
+                'rosacea': rosacea,
+                'xanthelasma': xanthelasma
             })
         except Exception as e:
             print(f"Error analyzing face: {str(e)}")
